@@ -243,7 +243,7 @@ draw_interaction <- function(d, x_factor, group_factor,
 }
 
 # ── Venn diagram ─────────────────────────────────────────────────────────────
-draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type) {
+draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type, fixed_total = NULL) {
   col_A   <- "#569BBD"
   col_B   <- "#1B9E77"
   col_AB  <- "#D95F02"
@@ -252,18 +252,22 @@ draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type) {
   total <- ss_A + ss_B + ss_AB + ss_res
   if (total <= 0) { plot.new(); text(0.5, 0.5, "No data"); return(invisible()) }
   
+  # Use a fixed total for scaling so circles are comparable across SS types
+  scale_total <- if (!is.null(fixed_total) && fixed_total > 0) fixed_total else total
+  
   r_scale <- 0.22
-  rA  <- max(r_scale * sqrt(ss_A  / total), 0.015)
-  rB  <- max(r_scale * sqrt(ss_B  / total), 0.015)
-  rAB <- max(r_scale * sqrt(ss_AB / total), 0.015)
+  rA   <- max(r_scale * sqrt(ss_A   / scale_total), 0.015)
+  rB   <- max(r_scale * sqrt(ss_B   / scale_total), 0.015)
+  rAB  <- max(r_scale * sqrt(ss_AB  / scale_total), 0.015)
+  r_res <- max(r_scale * sqrt(ss_res / scale_total), 0.02)
   
   cAx <- 0.35; cAy <- 0.62
   cBx <- 0.65; cBy <- 0.62
   cIx <- 0.50; cIy <- 0.38
   
-  par(mar = c(1, 1, 3, 1), bg = "white")
-  plot(NA, xlim = c(0, 1), ylim = c(0, 1),
-       asp = 1, axes = FALSE, xlab = "", ylab = "",
+  par(mar = c(2, 1, 3, 1), bg = "white")
+  plot(NA, xlim = c(0, 1), ylim = c(0.05, 0.95),
+       axes = FALSE, xlab = "", ylab = "",
        main = paste("Variance Partitioning \u2014 Type", ss_type, "SS"),
        cex.main = 1.15, col.main = "#569BBD")
   
@@ -274,17 +278,14 @@ draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type) {
             border = col_border, lwd = 2)
   }
   
-  r_res <- max(r_scale * sqrt(ss_res / total), 0.02)
-  draw_circle(0.50, 0.55, min(r_res * 1.8, 0.28),
-              col_fill = col_res, alpha = 0.15)
-  
+  draw_circle(0.50, 0.55, min(r_res * 1.8, 0.28), col_fill = col_res, alpha = 0.15)
   draw_circle(cAx, cAy, rA,  col_fill = col_A)
   draw_circle(cBx, cBy, rB,  col_fill = col_B)
   draw_circle(cIx, cIy, rAB, col_fill = col_AB)
   
-  text(cAx, cAy, paste0("A\n", round(ss_A, 1)),         cex = 0.85, font = 2, col = "white")
-  text(cBx, cBy, paste0("B\n", round(ss_B, 1)),         cex = 0.85, font = 2, col = "white")
-  text(cIx, cIy, paste0("A\u00d7B\n", round(ss_AB, 1)), cex = 0.85, font = 2, col = "white")
+  text(cAx, cAy, paste0("A\n",    round(ss_A,   1)), cex = 0.85, font = 2, col = "#222222")
+  text(cBx, cBy, paste0("B\n",    round(ss_B,   1)), cex = 0.85, font = 2, col = "#222222")
+  text(cIx, cIy, paste0("A\u00d7B\n", round(ss_AB, 1)), cex = 0.85, font = 2, col = "#222222")
   text(0.50, 0.10, paste0("Residual: ", round(ss_res, 1)), cex = 0.85, col = col_res, font = 2)
   
   legend("bottomright",
@@ -292,8 +293,8 @@ draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type) {
          fill   = adjustcolor(c(col_A, col_B, col_AB, col_res), alpha.f = 0.6),
          border = "white", cex = 0.8, bty = "n")
   
-  mtext("Circle size \u221d SS (schematic)", side = 1, line = -0.5,
-        cex = 0.75, col = "#888888", font = 3)
+  mtext("Circle size \u221d SS (schematic \u2014 scaled to Type I total)",
+        side = 1, line = 0.5, cex = 0.75, col = "#888888", font = 3)
 }
 
 # ── SS bar chart ──────────────────────────────────────────────────────────────
@@ -454,6 +455,8 @@ ui <- fluidPage(
       .type-desc { font-size: 0.88em; color: #444; margin-top: 5px; line-height: 1.5; }
 
       h3 { color: #569BBD; font-size: 1.15em; margin-top: 0; }
+      #cellCounts { margin-bottom: 0; }
+      #cellCounts table { margin-bottom: 0; }
     "))
   ),
   
@@ -466,6 +469,22 @@ ui <- fluidPage(
                        br(),
                        fluidRow(
                          column(6,
+                                wellPanel(
+                                  h3("Cell Counts"),
+                                  tags$table(style = "width:100%; border:none;",
+                                             tags$tr(
+                                               tags$td(style = "vertical-align:top; padding-right:16px; width:1%;",
+                                                       tableOutput("cellCounts")
+                                               ),
+                                               tags$td(style = "vertical-align:middle;",
+                                                       div(class = "info-box",
+                                                           "The table updates as you move the cell size sliders below.
+               Try making the cells unequal to see how imbalance affects the SS types."
+                                                       )
+                                               )
+                                             )
+                                  )
+                                  ),
                                 wellPanel(
                                   h3("Cell Sizes"),
                                   div(class = "info-box",
@@ -481,14 +500,6 @@ ui <- fluidPage(
                                   hr(),
                                   div(class = "section-label", "Seed (re-roll random data)"),
                                   sliderInput("seed", NULL, min = 1, max = 100, value = 42, step = 1)
-                                ),
-                                wellPanel(
-                                  h3("Cell Counts"),
-                                  tableOutput("cellCounts"),
-                                  div(class = "info-box",
-                                      "The table updates as you move the cell size sliders above.
-               Try making the cells unequal to see how imbalance affects the SS types."
-                                  )
                                 )
                          ),
                          column(6,
@@ -930,10 +941,14 @@ server <- function(input, output, session) {
   
   output$vennPlot <- renderPlot({
     ss <- switch(input$vennType, "I" = ss1(), "II" = ss2(), "III" = ss3())
+    t1 <- ss1()
     if (is.null(ss)) { plot.new(); return(invisible()) }
+    fixed_total <- if (!is.null(t1))
+      sum(t1$SS[t1$Term %in% c("A", "B", "A:B", "Residuals")])
+    else NULL
     draw_venn(ss$SS[ss$Term == "A"],   ss$SS[ss$Term == "B"],
               ss$SS[ss$Term == "A:B"], ss$SS[ss$Term == "Residuals"],
-              input$vennType)
+              input$vennType, fixed_total)
   })
   
   output$ssBarPlot <- renderPlot({
