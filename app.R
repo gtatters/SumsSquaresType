@@ -381,19 +381,45 @@ draw_marginal <- function(means, sds, ns, all_y, all_groups,
   }
 }
 
+# ── Safari-safe plotting ─────────────────────────────────────────────────────
+# Draws a base-R plot as a PNG image. Stand-in for renderPlot(), which
+# currently fails in Safari under Shinylive. Use with imageOutput().
+render_base <- function(id, session, draw) {
+  renderImage({
+    cd <- session$clientData
+    w  <- cd[[paste0("output_", id, "_width")]]
+    h  <- cd[[paste0("output_", id, "_height")]]
+    req(w > 0, h > 0)
+    pr <- cd$pixelratio
+    if (is.null(pr)) pr <- 1
+    f <- tempfile(fileext = ".png")
+    png(f, width = w * pr, height = h * pr, res = 72 * pr)
+    tryCatch(draw(), finally = dev.off())
+    list(src = f, contentType = "image/png", width = w, height = h)
+  }, deleteFile = TRUE)
+}
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 ui <- fluidPage(
   tags$head(
     tags$style(HTML("
       body { background: #ffffff; font-size: 15px; color: #222; }
 
-      .nav-tabs > li > a { color: #569BBD; font-size: 15px; }
       .nav-tabs > li.active > a,
-      .nav-tabs > li.active > a:focus,
-      .nav-tabs > li.active > a:hover {
-        background-color: #569BBD !important;
-        color: white !important;
-        border-color: #569BBD;
+      .nav-tabs > li.active > a:hover,
+      .nav-tabs > li.active > a:focus {
+        color: #009499 !important;
+        font-size: 12px; font-weight: bold;
+        background-color: #f0fafa !important;
+      }
+      .nav-tabs > li > a {
+        color: #666;
+        font-size: 12px;
+        padding: 5px 9px;
+      }
+      .nav-tabs > li > a:hover {
+        color: #009499;
+        background-color: #f0fafa;
       }
 
       .info-box {
@@ -465,7 +491,7 @@ ui <- fluidPage(
   tabsetPanel(id = "tabs",
               
               # ── TAB 1: Build ──────────────────────────────────────────────────────
-              tabPanel("\u2460 Build Data",
+              tabPanel("1. Build Data",
                        br(),
                        fluidRow(
                          column(6,
@@ -484,7 +510,7 @@ ui <- fluidPage(
                                                )
                                              )
                                   )
-                                  ),
+                                ),
                                 wellPanel(
                                   h3("Cell Sizes"),
                                   div(class = "info-box",
@@ -525,7 +551,7 @@ ui <- fluidPage(
               ),
               
               # ── TAB 2: Data Plot ──────────────────────────────────────────────────
-              tabPanel("\u2461 Data Plot",
+              tabPanel("2. Data Plot",
                        br(),
                        fluidRow(
                          column(3,
@@ -554,22 +580,22 @@ ui <- fluidPage(
                                 fluidRow(
                                   column(6,
                                          wellPanel(
-                                           plotOutput("interactionPlotA", height = "300px")
+                                           imageOutput("interactionPlotA", height = "300px")
                                          )
                                   ),
                                   column(6,
                                          wellPanel(
-                                           plotOutput("interactionPlotB", height = "300px")
+                                           imageOutput("interactionPlotB", height = "300px")
                                          )
                                   )
                                 ),
                                 uiOutput("mainEffectWarning"),
                                 fluidRow(
                                   column(6,
-                                         wellPanel(plotOutput("mainEffectA", height = "260px"))
+                                         wellPanel(imageOutput("mainEffectA", height = "260px"))
                                   ),
                                   column(6,
-                                         wellPanel(plotOutput("mainEffectB", height = "260px"))
+                                         wellPanel(imageOutput("mainEffectB", height = "260px"))
                                   )
                                 )
                          )
@@ -577,7 +603,7 @@ ui <- fluidPage(
               ),
               
               # ── TAB 3: ANOVA Table ────────────────────────────────────────────────
-              tabPanel("\u2462 ANOVA Table",
+              tabPanel("3. ANOVA Table",
                        br(),
                        fluidRow(
                          column(4,
@@ -611,7 +637,7 @@ ui <- fluidPage(
               ),
               
               # ── TAB 4: Visualise SS ───────────────────────────────────────────────
-              tabPanel("\u2463 Visualise SS",
+              tabPanel("4. Visualise SS",
                        br(),
                        fluidRow(
                          column(12,
@@ -637,13 +663,13 @@ ui <- fluidPage(
                                                choices  = c("Type I" = "I", "Type II" = "II", "Type III" = "III"),
                                                selected = "I", inline = TRUE
                                   ),
-                                  plotOutput("vennPlot", height = "380px")
+                                  imageOutput("vennPlot", height = "380px")
                                 )
                          ),
                          column(8,
                                 wellPanel(
                                   h3("SS by Term \u2014 All Three Types"),
-                                  plotOutput("ssBarPlot", height = "380px")
+                                  imageOutput("ssBarPlot", height = "380px")
                                 )
                          )
                        )
@@ -898,18 +924,18 @@ server <- function(input, output, session) {
   })
   
   # Interaction plot — Factor A on x-axis
-  output$interactionPlotA <- renderPlot({
+  output$interactionPlotA <- render_base("interactionPlotA", session, function() {
     draw_interaction(dat(), "A", "B",
                      input$showPoints, input$showCI, input$interaction)
   })
   
   # Interaction plot — Factor B on x-axis
-  output$interactionPlotB <- renderPlot({
+  output$interactionPlotB <- render_base("interactionPlotB", session, function() {
     draw_interaction(dat(), "B", "A",
                      input$showPoints, input$showCI, input$interaction)
   })
   
-  output$mainEffectA <- renderPlot({
+  output$mainEffectA <- render_base("mainEffectA", session, function() {
     d <- dat()
     draw_marginal(
       means       = tapply(d$y, d$A, mean),
@@ -924,7 +950,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$mainEffectB <- renderPlot({
+  output$mainEffectB <- render_base("mainEffectB", session, function() {
     d <- dat()
     draw_marginal(
       means       = tapply(d$y, d$B, mean),
@@ -939,7 +965,7 @@ server <- function(input, output, session) {
     )
   })
   
-  output$vennPlot <- renderPlot({
+  output$vennPlot <- render_base("vennPlot", session, function() {
     ss <- switch(input$vennType, "I" = ss1(), "II" = ss2(), "III" = ss3())
     t1 <- ss1()
     if (is.null(ss)) { plot.new(); return(invisible()) }
@@ -951,7 +977,7 @@ server <- function(input, output, session) {
               input$vennType, fixed_total)
   })
   
-  output$ssBarPlot <- renderPlot({
+  output$ssBarPlot <- render_base("ssBarPlot", session, function() {
     a1 <- ss1(); a2 <- ss2(); a3 <- ss3()
     if (is.null(a1) || is.null(a2) || is.null(a3)) { plot.new(); return(invisible()) }
     draw_ss_bars(a1, a2, a3)
