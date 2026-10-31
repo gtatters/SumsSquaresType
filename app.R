@@ -242,59 +242,176 @@ draw_interaction <- function(d, x_factor, group_factor,
     side = 3, line = 0.2, cex = 0.85, col = "#555555", font = 3)
 }
 
-# ── Venn diagram ─────────────────────────────────────────────────────────────
-draw_venn <- function(ss_A, ss_B, ss_AB, ss_res, ss_type, fixed_total = NULL) {
-  col_A   <- "#569BBD"
-  col_B   <- "#1B9E77"
-  col_AB  <- "#D95F02"
-  col_res <- "#AAAAAA"
-  
-  total <- ss_A + ss_B + ss_AB + ss_res
-  if (total <= 0) { plot.new(); text(0.5, 0.5, "No data"); return(invisible()) }
-  
-  # Use a fixed total for scaling so circles are comparable across SS types
-  scale_total <- if (!is.null(fixed_total) && fixed_total > 0) fixed_total else total
-  
-  r_scale <- 0.22
-  rA   <- max(r_scale * sqrt(ss_A   / scale_total), 0.015)
-  rB   <- max(r_scale * sqrt(ss_B   / scale_total), 0.015)
-  rAB  <- max(r_scale * sqrt(ss_AB  / scale_total), 0.015)
-  r_res <- max(r_scale * sqrt(ss_res / scale_total), 0.02)
-  
-  cAx <- 0.35; cAy <- 0.62
-  cBx <- 0.65; cBy <- 0.62
-  cIx <- 0.50; cIy <- 0.38
-  
-  par(mar = c(2, 1, 3, 1), bg = "white")
-  plot(NA, xlim = c(0, 1), ylim = c(0.05, 0.95),
-       axes = FALSE, xlab = "", ylab = "",
-       main = paste("Variance Partitioning \u2014 Type", ss_type, "SS"),
-       cex.main = 1.15, col.main = "#569BBD")
-  
-  draw_circle <- function(cx, cy, r, col_fill, col_border = "white", alpha = 0.45) {
-    theta <- seq(0, 2*pi, length.out = 200)
-    polygon(cx + r * cos(theta), cy + r * sin(theta),
-            col = adjustcolor(col_fill, alpha.f = alpha),
-            border = col_border, lwd = 2)
+# ── SS as model comparisons (Tab 4) ──────────────────────────────────────────
+# Every SS term is the squared distance between the fitted values of two
+# models: a smaller model without the term and a larger model with it.
+# Within a cell every observation shares the same fitted values, so
+# SS_term = sum over cells of n_cell * (larger fit - smaller fit)^2.
+
+ss_models <- list(
+  "I"   = list("A"   = c("y ~ 1",       "y ~ A"),
+               "B"   = c("y ~ A",       "y ~ A + B"),
+               "A:B" = c("y ~ A + B",   "y ~ A * B")),
+  "II"  = list("A"   = c("y ~ B",       "y ~ A + B"),
+               "B"   = c("y ~ A",       "y ~ A + B"),
+               "A:B" = c("y ~ A + B",   "y ~ A * B")),
+  "III" = list("A"   = c("y ~ B + A:B", "y ~ A * B"),
+               "B"   = c("y ~ A + A:B", "y ~ A * B"),
+               "A:B" = c("y ~ A + B",   "y ~ A * B"))
+)
+
+term_cols <- c("A" = "#569BBD", "B" = "#1B9E77", "A:B" = "#D95F02",
+               "Error" = "#009499")
+
+# Fitted values of the smaller and larger model behind one SS term
+fit_pair <- function(dat, type, term) {
+  f <- function(fm) fitted(lm(fm, data = dat))
+  if (term == "A:B") return(list(small = f(y ~ A + B), big = f(y ~ A * B)))
+  if (type == "I") {
+    if (term == "A") return(list(small = f(y ~ 1), big = f(y ~ A)))
+    return(list(small = f(y ~ A), big = f(y ~ A + B)))
   }
+  if (type == "II") {
+    if (term == "A") return(list(small = f(y ~ B), big = f(y ~ A + B)))
+    return(list(small = f(y ~ A), big = f(y ~ A + B)))
+  }
+  # Type III: sum-to-zero coding, then drop the main-effect column only
+  d3 <- dat
+  d3$A <- C(d3$A, contr.sum)
+  d3$B <- C(d3$B, contr.sum)
+  full <- lm(y ~ A * B, data = d3)
+  X    <- model.matrix(full)
+  keep <- setdiff(colnames(X), if (term == "A") "A1" else "B1")
+  list(small = fitted(lm(dat$y ~ X[, keep] - 1)), big = fitted(full))
+}
+
+ss_cell_x <- c("A1.B1" = 0.70, "A1.B2" = 1.40, "A2.B1" = 2.25, "A2.B2" = 2.95)
+ss_pch    <- c("B1" = 19, "B2" = 17)   # circle = B1, triangle = B2
+ss_cell_pch <- function(cl) ss_pch[sub(".*\\.", "", cl)]
+
+ss_axes <- function(ylim) {
+  plot(NA, xlim = c(0.35, 3.35), ylim = ylim, xaxt = "n", bty = "l",
+       xlab = "", ylab = "y", las = 1, cex.axis = 1.0, cex.lab = 1.1)
+  # faint band behind each cell, and a divider between A1 and A2
+  usr <- par("usr")
+  rect(ss_cell_x - 0.28, usr[3], ss_cell_x + 0.31, usr[4], col = "#f4f4f4", border = NA)
+  abline(v = mean(ss_cell_x[2:3]), col = "gray80", lty = 3)
+  box(bty = "l")
+  axis(1, at = ss_cell_x, labels = c("B1", "B2", "B1", "B2"),
+       tick = FALSE, line = -0.6, cex.axis = 1.0)
+  axis(1, at = c(mean(ss_cell_x[1:2]), mean(ss_cell_x[3:4])), labels = c("A1", "A2"),
+       tick = FALSE, line = 0.6, font = 2, cex.axis = 1.1)
+}
+
+# Fixed horizontal jitter for each observation (does not touch the data RNG)
+ss_jitter <- function(n) ((seq_len(n) - 0.5) / n - 0.5) * 0.3
+
+draw_ss_term <- function(dat, type, term, ylim) {
+  fp   <- fit_pair(dat, type, term)
+  cell <- interaction(dat$A, dat$B, sep = ".")
+  ss   <- sum((fp$big - fp$small)^2)
+  col  <- term_cols[term]
   
-  draw_circle(0.50, 0.55, min(r_res * 1.8, 0.28), col_fill = col_res, alpha = 0.15)
-  draw_circle(cAx, cAy, rA,  col_fill = col_A)
-  draw_circle(cBx, cBy, rB,  col_fill = col_B)
-  draw_circle(cIx, cIy, rAB, col_fill = col_AB)
+  par(mar = c(3.2, 4.2, 5.2, 0.8))
+  ss_axes(ylim)
+  for (cl in names(ss_cell_x)) {
+    i  <- which(cell == cl)
+    x0 <- ss_cell_x[cl]
+    points(x0 + ss_jitter(length(i)), dat$y[i],
+           pch = ss_cell_pch(cl), col = adjustcolor("gray30", 0.55), cex = 0.95)
+    ys <- fp$small[i][1]
+    yb <- fp$big[i][1]
+    segments(x0 - 0.2, ys, x0 + 0.2, ys, col = "gray35", lwd = 2.5, lty = 2)
+    segments(x0 - 0.2, yb, x0 + 0.2, yb, col = "black", lwd = 3)
+    segments(x0 + 0.23, ys, x0 + 0.23, yb, col = col, lwd = 7, lend = 1)
+    text(x0 + 0.23, max(ys, yb), paste0("×", length(i)),
+         pos = 3, offset = 0.3, col = col, cex = 0.9, font = 2)
+  }
+  title(main = bquote(SS[.(term)] == .(formatC(ss, format = "f", digits = 1))),
+        col.main = col, line = 3.3, cex.main = 1.35)
+  mtext(paste0(ss_models[[type]][[term]][1], "  →  ",
+               ss_models[[type]][[term]][2]),
+        side = 3, line = 1.8, cex = 1.0, col = "gray25")
+  mtext(expression("dashed = " * hat(Y) * " without term;   solid = " * hat(Y) * " with term"),
+        side = 3, line = 0.2, cex = 0.85, col = "gray45")
+}
+
+draw_ss_error <- function(dat, ylim) {
+  full <- fitted(lm(y ~ A * B, data = dat))
+  cell <- interaction(dat$A, dat$B, sep = ".")
+  ss   <- sum((dat$y - full)^2)
+  col  <- term_cols["Error"]
   
-  text(cAx, cAy, paste0("A\n",    round(ss_A,   1)), cex = 0.85, font = 2, col = "#222222")
-  text(cBx, cBy, paste0("B\n",    round(ss_B,   1)), cex = 0.85, font = 2, col = "#222222")
-  text(cIx, cIy, paste0("A\u00d7B\n", round(ss_AB, 1)), cex = 0.85, font = 2, col = "#222222")
-  text(0.50, 0.10, paste0("Residual: ", round(ss_res, 1)), cex = 0.85, col = col_res, font = 2)
+  par(mar = c(3.2, 4.2, 5.2, 0.8))
+  ss_axes(ylim)
+  for (cl in names(ss_cell_x)) {
+    i  <- which(cell == cl)
+    x0 <- ss_cell_x[cl]
+    xs <- x0 + ss_jitter(length(i))
+    segments(xs, dat$y[i], xs, full[i], col = adjustcolor(col, 0.8), lwd = 1.3)
+    points(xs, dat$y[i], pch = ss_cell_pch(cl), col = adjustcolor("gray30", 0.6), cex = 0.95)
+    segments(x0 - 0.2, full[i][1], x0 + 0.2, full[i][1], col = "black", lwd = 3)
+  }
+  title(main = bquote(SS[error] == .(formatC(ss, format = "f", digits = 1))),
+        col.main = col, line = 3.3, cex.main = 1.35)
+  mtext("each point → its cell mean", side = 3, line = 1.8,
+        cex = 1.0, col = "gray25")
+  mtext(expression("black = " * hat(Y) * " of full model;  identical for all Types"),
+        side = 3, line = 0.2, cex = 0.85, col = "gray45")
+}
+
+draw_ss_panels <- function(dat, type) {
+  ylim <- range(dat$y) + c(-2, 0.12 * diff(range(dat$y)))
+  par(mfrow = c(1, 4), bg = "white", cex = 1)  # stop mfrow shrinking text
+  for (tm in c("A", "B", "A:B")) {
+    draw_ss_term(dat, type, tm, ylim)
+    if (tm == "A")
+      legend("topright", pch = ss_pch, legend = names(ss_pch), col = "gray30",
+             bty = "n", cex = 0.9, horiz = TRUE, inset = c(0, -0.02))
+  }
+  draw_ss_error(dat, ylim)
+}
+
+# Stacked bar: SS total vs the selected Type's terms (plus any unassigned gap)
+draw_partition <- function(ss_tab, ss_total, type) {
+  vals <- c(ss_tab$SS[ss_tab$Term == "A"],   ss_tab$SS[ss_tab$Term == "B"],
+            ss_tab$SS[ss_tab$Term == "A:B"], ss_tab$SS[ss_tab$Term == "Residuals"])
+  names(vals) <- c("A", "B", "A:B", "Error")
+  cols <- term_cols[names(vals)]
+  gap  <- ss_total - sum(vals)
+  ytop <- max(ss_total, sum(vals)) * 1.3
   
-  legend("bottomright",
-         legend = c("Factor A", "Factor B", "A\u00d7B interaction", "Residual"),
-         fill   = adjustcolor(c(col_A, col_B, col_AB, col_res), alpha.f = 0.6),
-         border = "white", cex = 0.8, bty = "n")
+  par(mar = c(3, 5, 3.5, 9), bg = "white")
+  plot(NA, xlim = c(0.3, 2.7), ylim = c(0, ytop), xaxt = "n", bty = "l",
+       xlab = "", ylab = "Sum of squares", las = 1)
+  axis(1, at = 1:2, labels = c("SS total", paste("Type", type, "terms")),
+       tick = FALSE, cex.axis = 1.05, font = 2)
+  title(main = paste("Type", type, "sums of squares"),
+        cex.main = 1.15, col.main = "#569BBD")
   
-  mtext("Circle size \u221d SS (schematic \u2014 scaled to Type I total)",
-        side = 1, line = 0.5, cex = 0.75, col = "#888888", font = 3)
+  rect(0.6, 0, 1.4, ss_total, col = "gray80", border = "white")
+  text(1, ss_total, formatC(ss_total, format = "f", digits = 1), pos = 3, font = 2)
+  
+  bottoms <- c(0, cumsum(vals)[-length(vals)])
+  for (k in seq_along(vals)) {
+    rect(1.6, bottoms[k], 2.4, bottoms[k] + vals[k], col = cols[k], border = "white")
+    if (vals[k] > ytop * 0.04)
+      text(2, bottoms[k] + vals[k] / 2,
+           formatC(vals[k], format = "f", digits = 1), col = "white", font = 2, cex = 0.9)
+  }
+  if (gap > ss_total * 0.001) {
+    rect(1.6, sum(vals), 2.4, ss_total, col = NA, border = "gray40", lty = 2, lwd = 1.5)
+    gap_lab <- if (type == "II") "shared by A and B:\ncredited to neither\n" else
+      "not assigned\nto any term\n"
+    text(2, ss_total, paste0(gap_lab, formatC(gap, format = "f", digits = 1)),
+         pos = 3, cex = 0.8, col = "gray25")
+  } else if (gap < -ss_total * 0.001) {
+    segments(1.5, ss_total, 2.5, ss_total, lty = 2, col = "gray40", lwd = 1.5)
+    text(2, ss_total, "SS total", pos = 1, cex = 0.8, col = "gray25")
+  }
+  legend("topleft", inset = c(1.01, 0), xpd = TRUE, bty = "n", cex = 0.9,
+         fill = c(cols, "gray80"), border = "white",
+         legend = c("Factor A", "Factor B", "A×B", "Error", "SS total"))
 }
 
 # ── SS bar chart ──────────────────────────────────────────────────────────────
@@ -480,6 +597,14 @@ ui <- fluidPage(
       }
       .type-desc { font-size: 0.88em; color: #444; margin-top: 5px; line-height: 1.5; }
 
+      .ss-strip { display: flex; gap: 10px; margin-top: 4px; }
+      .ss-strip .cell {
+        flex: 1; background: #f7f7f7; border-radius: 3px; padding: 6px 10px;
+      }
+      .ss-strip .lab { font-size: 0.82em; color: #555; }
+      .ss-strip .num { font-size: 24px; font-weight: 700; line-height: 1.2; }
+      .ss-strip .note { font-size: 0.78em; color: #777; }
+
       h3 { color: #569BBD; font-size: 1.15em; margin-top: 0; }
       #cellCounts { margin-bottom: 0; }
       #cellCounts table { margin-bottom: 0; }
@@ -519,10 +644,10 @@ ui <- fluidPage(
                all three SS types give the same answer \u2014 unequal sizes
                are what make the choice matter."
                                   ),
-                                  sliderInput("n11", "Cell A1 and B1:", min = 2, max = 30, value = 10, step = 1),
-                                  sliderInput("n12", "Cell A1 and B2:", min = 2, max = 30, value = 10, step = 1),
-                                  sliderInput("n21", "Cell A2 and B1:", min = 2, max = 30, value = 10, step = 1),
-                                  sliderInput("n22", "Cell A2 and B2:", min = 2, max = 30, value = 10, step = 1),
+                                  sliderInput("n11", "Cell A1 and B1:", min = 2, max = 30, value = 12, step = 1),
+                                  sliderInput("n12", "Cell A1 and B2:", min = 2, max = 30, value = 4, step = 1),
+                                  sliderInput("n21", "Cell A2 and B1:", min = 2, max = 30, value = 6, step = 1),
+                                  sliderInput("n22", "Cell A2 and B2:", min = 2, max = 30, value = 14, step = 1),
                                   hr(),
                                   div(class = "section-label", "Seed (re-roll random data)"),
                                   sliderInput("seed", NULL, min = 1, max = 100, value = 42, step = 1)
@@ -538,8 +663,8 @@ ui <- fluidPage(
                                   ),
                                   sliderInput("effA",        "Effect of Factor A:",       min = -40, max = 40, value = 15, step = 1),
                                   sliderInput("effB",        "Effect of Factor B:",       min = -40, max = 40, value = 5,  step = 1),
-                                  sliderInput("interaction", "Interaction (A \u00d7 B):", min = -40, max = 40, value = 0,  step = 1),
-                                  sliderInput("noise",       "Noise (within-group SD):",  min = 1,   max = 20, value = 10, step = 1),
+                                  sliderInput("interaction", "Interaction (A \u00d7 B):", min = -40, max = 40, value = 10, step = 1),
+                                  sliderInput("noise",       "Noise (within-group SD):",  min = 1,   max = 20, value = 5, step = 1),
                                   uiOutput("cohenDisplay"),
                                   div(class = "warn-box",
                                       "\u26a0\ufe0f  When Interaction \u2260 0, Type II SS can be misleading
@@ -640,36 +765,49 @@ ui <- fluidPage(
               tabPanel("4. Visualise SS",
                        br(),
                        fluidRow(
-                         column(12,
-                                div(class = "info-box",
-                                    strong("How to read these plots:"),
-                                    " The bar chart (right) shows the SS for each term side by side
-             for all three SS types \u2014 bars that differ in height are where
-             the types disagree. The Venn diagram (left) gives a schematic
-             sense of how the total variance is carved up; circle size is
-             roughly proportional to SS. When cell sizes are equal all bars
-             will be the same height and all circles the same size across types.",
-                                    br(), br(),
-                                    "Use the radio buttons to change which SS type the Venn diagram
-             reflects \u2014 the bar chart always shows all three at once."
-                                )
-                         )
-                       ),
-                       fluidRow(
                          column(4,
                                 wellPanel(
-                                  h3("Venn Diagram"),
-                                  radioButtons("vennType", "Show SS type:",
-                                               choices  = c("Type I" = "I", "Type II" = "II", "Type III" = "III"),
-                                               selected = "I", inline = TRUE
+                                  h3("Choose SS Type"),
+                                  radioButtons("vizType", NULL,
+                                               choices  = c("Type I — Sequential"    = "I",
+                                                            "Type II — Hierarchical" = "II",
+                                                            "Type III — Marginal"    = "III"),
+                                               selected = "I",
                                   ),
-                                  imageOutput("vennPlot", height = "380px")
+                                  uiOutput("vizDescription")
                                 )
                          ),
                          column(8,
+                                div(class = "info-box",
+                                    strong("How to read these plots:"),
+                                    " Every sum of squares compares two models: a smaller one ",
+                                    "without the term and a larger one with it. In each cell, the ",
+                                    strong("dashed grey bar"), " is the predicted value (\u0176) from the smaller model and the ",
+                                    strong("solid black bar"), " is the predicted value (\u0176) from the larger model. ",
+                                    "The ", strong("coloured bar"), " is the gap between them. Every observation in that ",
+                                    "cell shares the same gap, so it counts n times (×n). The SS is the sum of the ",
+                                    "squared gaps for every observation. With unequal cell sizes, notice which cells ",
+                                    "dominate each SS, and how the dashed bars move when you change Type."
+                                ),
+                                uiOutput("ssStrip")
+                         )
+                       ),
+                       fluidRow(
+                         column(12,
+                                wellPanel(imageOutput("ssPanels", height = "420px"))
+                         )
+                       ),
+                       fluidRow(
+                         column(5,
                                 wellPanel(
-                                  h3("SS by Term \u2014 All Three Types"),
-                                  imageOutput("ssBarPlot", height = "380px")
+                                  h3("Where Does SS Total Go?"),
+                                  imageOutput("partitionPlot", height = "360px")
+                                )
+                         ),
+                         column(7,
+                                wellPanel(
+                                  h3("SS by Term — All Three Types"),
+                                  imageOutput("ssBarPlot", height = "360px")
                                 )
                          )
                        )
@@ -965,16 +1103,74 @@ server <- function(input, output, session) {
     )
   })
   
-  output$vennPlot <- render_base("vennPlot", session, function() {
-    ss <- switch(input$vennType, "I" = ss1(), "II" = ss2(), "III" = ss3())
-    t1 <- ss1()
+  viz_ss <- reactive({
+    switch(input$vizType, "I" = ss1(), "II" = ss2(), "III" = ss3())
+  })
+  
+  ss_total <- reactive({
+    d <- dat()
+    sum((d$y - mean(d$y))^2)
+  })
+  
+  output$ssPanels <- render_base("ssPanels", session, function() {
+    d <- dat()
+    if (is.null(viz_ss())) { plot.new(); return(invisible()) }
+    draw_ss_panels(d, input$vizType)
+  })
+  
+  output$partitionPlot <- render_base("partitionPlot", session, function() {
+    ss <- viz_ss()
     if (is.null(ss)) { plot.new(); return(invisible()) }
-    fixed_total <- if (!is.null(t1))
-      sum(t1$SS[t1$Term %in% c("A", "B", "A:B", "Residuals")])
-    else NULL
-    draw_venn(ss$SS[ss$Term == "A"],   ss$SS[ss$Term == "B"],
-              ss$SS[ss$Term == "A:B"], ss$SS[ss$Term == "Residuals"],
-              input$vennType, fixed_total)
+    draw_partition(ss, ss_total(), input$vizType)
+  })
+  
+  output$ssStrip <- renderUI({
+    ss <- viz_ss()
+    if (is.null(ss)) return(NULL)
+    get_ss <- function(trm) ss$SS[ss$Term == trm]
+    tot  <- ss_total()
+    summ <- sum(ss$SS)
+    cell <- function(lab, val, col, note = NULL) {
+      div(class = "cell",
+          div(class = "lab", HTML(lab)),
+          div(class = "num", style = paste0("color:", col, ";"),
+              formatC(val, format = "f", digits = 1)),
+          if (!is.null(note)) div(class = "note", note))
+    }
+    gap_note <- if (abs(tot - summ) < 0.05) "= SS total" else
+      paste0("SS total = ", formatC(tot, format = "f", digits = 1))
+    div(class = "ss-strip",
+        cell("SS<sub>A</sub>",   get_ss("A"),         term_cols["A"]),
+        cell("SS<sub>B</sub>",   get_ss("B"),         term_cols["B"]),
+        cell("SS<sub>A:B</sub>", get_ss("A:B"),       term_cols["A:B"]),
+        cell("SS<sub>error</sub>", get_ss("Residuals"), term_cols["Error"]),
+        cell("Sum of all four",  summ, "#222", gap_note))
+  })
+  
+  output$vizDescription <- renderUI({
+    switch(input$vizType,
+           "I" = div(class = "type-desc",
+                     strong("Type I (sequential):"),
+                     " A is compared with a model containing nothing but the grand mean, so A
+                     gets credit for everything it can explain. B is then judged only against
+                     what A left over. The four SS add up exactly to SS total."),
+           "II" = div(class = "type-desc",
+                      strong("Type II (hierarchical):"),
+                      " each main effect is judged after the other main effect is already in the
+                      model (but without the interaction). With unequal cells, variation that A
+                      and B could both explain is credited to neither, so the four SS no longer
+                      add up to SS total."),
+           "III" = div(class = "type-desc",
+                       strong("Type III (marginal):"),
+                       " each main effect is judged after everything else, including the
+                       interaction. The smaller model for A forces the A1 and A2 averages of the
+                       cell means to be equal, giving every cell equal weight whatever its n.
+                       That is why small cells can get surprisingly large gaps. In the bar chart
+                       below, the dashed box is variation not assigned to any term. Unlike Type II,
+                       it is not purely the overlap between A and B, because the Type III
+                       comparison models are less tidy; in some designs the terms can even add up
+                       to more than SS total.")
+    )
   })
   
   output$ssBarPlot <- render_base("ssBarPlot", session, function() {
