@@ -501,12 +501,16 @@ draw_marginal <- function(means, sds, ns, all_y, all_groups,
 # ── Safari-safe plotting ─────────────────────────────────────────────────────
 # Draws a base-R plot as a PNG image. Stand-in for renderPlot(), which
 # currently fails in Safari under Shinylive. Use with imageOutput().
-render_base <- function(id, session, draw) {
+render_base <- function(id, session, draw, default_w = 800) {
   renderImage({
     cd <- session$clientData
     w  <- cd[[paste0("output_", id, "_width")]]
     h  <- cd[[paste0("output_", id, "_height")]]
-    req(w > 0, h > 0)
+    # Width can be missing or 0 for a moment when a tab is first shown.
+    # Use a fallback size rather than req(), which can leave the plot
+    # blank or stale if the browser never re-reports the size.
+    if (is.null(w) || w <= 0) w <- default_w
+    if (is.null(h) || h <= 0) h <- 400
     pr <- cd$pixelratio
     if (is.null(pr)) pr <- 1
     f <- tempfile(fileext = ".png")
@@ -515,7 +519,6 @@ render_base <- function(id, session, draw) {
     list(src = f, contentType = "image/png", width = w, height = h)
   }, deleteFile = TRUE)
 }
-
 # ── UI ───────────────────────────────────────────────────────────────────────
 ui <- fluidPage(
   tags$head(
@@ -818,11 +821,11 @@ ui <- fluidPage(
 # ── Server ───────────────────────────────────────────────────────────────────
 server <- function(input, output, session) {
   
-  dat <- reactive({
+  dat <- debounce(reactive({
     make_data(input$n11, input$n12, input$n21, input$n22,
               input$effA, input$effB, input$interaction,
               input$noise, input$seed)
-  })
+  }), 300)
   
   output$downloadData <- downloadHandler(
     filename = function() paste0("ss_data_seed", input$seed, ".csv"),
