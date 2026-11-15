@@ -1049,14 +1049,14 @@ server <- function(input, output, session) {
   output$mainEffectWarning <- renderUI({
     if (input$interaction != 0)
       div(class = "warn-box",
-          "\u26a0\ufe0f  An interaction is present. The marginal means below
-         average across levels of the other factor, which can be misleading
-         when the lines above are non-parallel. Interpret main effects
-         with caution."
+          "\u26a0\ufe0f  An interaction is present. The plots below show marginal
+         means, which pool each level across both levels of the other factor.
+         When the lines above are non-parallel, that pooled average can hide
+         what is really going on. Interpret main effects with caution."
       )
     else
       div(class = "info-box",
-          "\u2139\ufe0f  No interaction is set. The marginal means below
+          "\u2139\ufe0f  No interaction is set. The marginal means shown below
          reliably summarise the effect of each factor independently."
       )
   })
