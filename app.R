@@ -513,6 +513,9 @@ render_base <- function(id, session, draw, default_w = 800) {
     if (is.null(h) || h <= 0) h <- 400
     pr <- cd$pixelratio
     if (is.null(pr)) pr <- 1
+    # Safari chokes on very large images sent back from R; capping the
+    # resolution keeps each PNG small enough to get through.
+    pr <- min(pr, 1)
     f <- tempfile(fileext = ".png")
     png(f, width = w * pr, height = h * pr, res = 72 * pr)
     tryCatch(draw(), finally = dev.off())
@@ -614,7 +617,7 @@ ui <- fluidPage(
     "))
   ),
   
-  titlePanel("Sums of Squares: Type I, II, and III (v2)"),
+  titlePanel("Sums of Squares: Type I, II, and III"),
   
   tabsetPanel(id = "tabs",
               
