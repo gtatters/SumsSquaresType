@@ -614,7 +614,7 @@ ui <- fluidPage(
     "))
   ),
   
-  titlePanel("Sums of Squares: Type I, II, and III"),
+  titlePanel("Sums of Squares: Type I, II, and III (v2)"),
   
   tabsetPanel(id = "tabs",
               
